@@ -58,38 +58,29 @@ function mulberry32(seed) {
 
 /* --------------------------- Terrain --------------------------- */
 
-const WORLD_RADIUS = 100;
-const TERRAIN_SIZE = 232;
-const POND = { x: -38, z: 12, r: 15.5 };
+const WORLD_RADIUS = 148;
+const TERRAIN_SIZE = 344;
 const WATER_LEVEL = -2.52;
 const GIANT_TREE = { x: -44, z: -42 };
 const SPAWN = { x: 1, z: 68 };
+const RIVER_HALF_WIDTH = 3.9;
 
-function terrainHeight(x, z) {
-  let h = (fbm(x * 0.017 + 10, z * 0.017 - 4) - 0.5) * 9.2;
-  h += (fbm(x * 0.065 - 3, z * 0.065 + 8) - 0.5) * 2.15;
-  h += (fbm(x * 0.22, z * 0.22) - 0.5) * 0.42;
-  const rim = Math.hypot(x, z);
-  h += Math.max(0, rim - 74) * 0.16;
-  const pondDist = Math.hypot(x - POND.x, z - POND.z);
-  h -= Math.exp(-(pondDist * pondDist) / (2 * 11 * 11)) * 7.2;
-  const elderDist = Math.hypot(x - GIANT_TREE.x, z - GIANT_TREE.z);
-  h += Math.exp(-(elderDist * elderDist) / (2 * 15 * 15)) * 0.7;
-  return h;
-}
+/* Four connected basins and one long river make the hollow feel like a
+   landscape rather than a clearing. Their water shares one shader family. */
+const POND = { x: -38, z: 12, r: 15.5, depth: 7.2, basin: 11.0 };
+const LAKES = [
+  POND,
+  { x: 66, z: -64, r: 19.5, depth: 8.4, basin: 13.4 },
+  { x: -91, z: 60, r: 16.5, depth: 7.8, basin: 11.7 },
+  { x: -119, z: -113, r: 21.0, depth: 9.0, basin: 14.5 }
+];
 
-const mainPathPoints = [
-  [0, 84], [0.5, 73], [-1, 62], [1.4, 52], [-2.2, 41], [0.8, 31],
-  [-2.8, 22], [1.2, 14], [6.2, 5], [7.1, -5], [2.4, -15], [-4.8, -25],
-  [-8.6, -36], [-3.6, -48], [3.4, -58], [8.2, -69], [4.1, -82], [0, -91]
+const riverPoints = [
+  [-139, 136], [-128, 118], [-121, 98], [-114, 78], [-110, 58],
+  [-112, 38], [-106, 18], [-99, -2], [-96, -24], [-100, -46],
+  [-108, -68], [-114, -88], [-119, -94]
 ].map(([x, z]) => new THREE.Vector3(x, 0, z));
-
-const sidePathPoints = [
-  [-2.4, 22.5], [-9, 21.8], [-16, 20.2], [-20.2, 19.1], [-23, 17.5]
-].map(([x, z]) => new THREE.Vector3(x, 0, z));
-
-const mainPathCurve = new THREE.CatmullRomCurve3(mainPathPoints, false, 'catmullrom', 0.45);
-const sidePathCurve = new THREE.CatmullRomCurve3(sidePathPoints, false, 'catmullrom', 0.4);
+const riverCurve = new THREE.CatmullRomCurve3(riverPoints, false, 'catmullrom', 0.35);
 
 function sampleCurve(curve, count) {
   const points = [];
@@ -97,9 +88,72 @@ function sampleCurve(curve, count) {
   return points;
 }
 
-const mainPathSamples = sampleCurve(mainPathCurve, 280);
-const sidePathSamples = sampleCurve(sidePathCurve, 70);
-const allPathSamples = [...mainPathSamples, ...sidePathSamples];
+const riverSamples = sampleCurve(riverCurve, 96);
+
+function distanceToRiver(x, z) {
+  let best = Infinity;
+  for (let i = 0; i < riverSamples.length; i++) {
+    const p = riverSamples[i];
+    const dx = x - p.x, dz = z - p.z;
+    const d = dx * dx + dz * dz;
+    if (d < best) best = d;
+  }
+  return Math.sqrt(best);
+}
+
+function lakeClearance(x, z) {
+  let best = Infinity;
+  for (const body of LAKES) {
+    const clearance = Math.hypot(x - body.x, z - body.z) - body.r;
+    if (clearance < best) best = clearance;
+  }
+  return best;
+}
+
+function terrainHeight(x, z) {
+  let h = (fbm(x * 0.017 + 10, z * 0.017 - 4) - 0.5) * 9.2;
+  h += (fbm(x * 0.065 - 3, z * 0.065 + 8) - 0.5) * 2.15;
+  h += (fbm(x * 0.22, z * 0.22) - 0.5) * 0.42;
+  const rim = Math.hypot(x, z);
+  h += Math.max(0, rim - 108) * 0.18;
+
+  for (const body of LAKES) {
+    const dx = x - body.x, dz = z - body.z;
+    h -= Math.exp(-(dx * dx + dz * dz) / (2 * body.basin * body.basin)) * body.depth;
+  }
+
+  const riverDist = distanceToRiver(x, z);
+  h -= (1 - smoothstep(RIVER_HALF_WIDTH + 0.7, RIVER_HALF_WIDTH + 9.5, riverDist)) * 7.1;
+
+  const elderDist = Math.hypot(x - GIANT_TREE.x, z - GIANT_TREE.z);
+  h += Math.exp(-(elderDist * elderDist) / (2 * 15 * 15)) * 0.7;
+  return h;
+}
+
+const mainPathPoints = [
+  [0, 126], [0.5, 112], [0, 98], [0.5, 84], [0.5, 73], [-1, 62], [1.4, 52], [-2.2, 41], [0.8, 31],
+  [-2.8, 22], [1.2, 14], [6.2, 5], [7.1, -5], [2.4, -15], [-4.8, -25],
+  [-8.6, -36], [-3.6, -48], [3.4, -58], [8.2, -69], [4.1, -82], [0, -91],
+  [-3.2, -105], [1.4, -119], [-1.8, -134]
+].map(([x, z]) => new THREE.Vector3(x, 0, z));
+
+const sidePathPoints = [
+  [-2.4, 22.5], [-9, 21.8], [-16, 20.2], [-20.2, 19.1], [-23, 17.5],
+  [-32, 18], [-42, 22], [-52, 28], [-62, 34], [-73, 42]
+].map(([x, z]) => new THREE.Vector3(x, 0, z));
+
+const eastPathPoints = [
+  [-4.8, -25], [8, -28], [21, -35], [33, -44], [43, -51], [51, -55]
+].map(([x, z]) => new THREE.Vector3(x, 0, z));
+
+const mainPathCurve = new THREE.CatmullRomCurve3(mainPathPoints, false, 'catmullrom', 0.45);
+const sidePathCurve = new THREE.CatmullRomCurve3(sidePathPoints, false, 'catmullrom', 0.4);
+const eastPathCurve = new THREE.CatmullRomCurve3(eastPathPoints, false, 'catmullrom', 0.4);
+
+const mainPathSamples = sampleCurve(mainPathCurve, 390);
+const sidePathSamples = sampleCurve(sidePathCurve, 105);
+const eastPathSamples = sampleCurve(eastPathCurve, 90);
+const allPathSamples = [...mainPathSamples, ...sidePathSamples, ...eastPathSamples];
 
 function distanceToPath(x, z) {
   let best = Infinity;
@@ -114,6 +168,12 @@ function distanceToPath(x, z) {
 
 function distanceToPond(x, z) {
   return Math.hypot(x - POND.x, z - POND.z);
+}
+
+function isWaterAt(x, z, ground = terrainHeight(x, z)) {
+  if (ground > WATER_LEVEL - 0.15) return false;
+  if (lakeClearance(x, z) < 1.2) return true;
+  return distanceToRiver(x, z) < RIVER_HALF_WIDTH + 1.6;
 }
 
 /* ---------------------------- DOM ------------------------------ */
@@ -133,6 +193,11 @@ const regionName = $('regionName');
 const compassTicks = $('compassTicks');
 const compassLetter = $('compassLetter');
 const compassDeg = $('compassDeg');
+const itemSlot = $('blunderbussSlot');
+const itemState = $('itemState');
+const itemSwitch = $('itemSwitch');
+const itemProgress = $('itemProgress');
+const fireBtn = $('fireBtn');
 
 /* --------------------------- Renderer -------------------------- */
 
@@ -159,9 +224,9 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xc3b596);
-scene.fog = new THREE.FogExp2(0xc3b596, 0.0126);
+scene.fog = new THREE.FogExp2(0xc3b596, 0.0107);
 
-const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.08, 260);
+const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.08, 300);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
 
@@ -323,7 +388,7 @@ const rockMaterial = new THREE.MeshStandardMaterial({
 /* --------------------------- Terrain --------------------------- */
 
 function buildTerrain() {
-  const segments = 176;
+  const segments = isTouch ? 160 : 204;
   const geometry = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, segments, segments);
   geometry.rotateX(-Math.PI / 2);
   const pos = geometry.attributes.position;
@@ -354,12 +419,18 @@ function buildTerrain() {
       color.lerp(hash(x * 3.1, z * 2.7) > 0.55 ? dirt : dirtDark, blend * 0.92);
     }
 
-    const pondDist = distanceToPond(x, z);
-    if (pondDist < 23) {
-      const shore = 1 - smoothstep(14.2, 22.5, pondDist);
-      color.lerp(sand, shore * 0.58);
-      if (pondDist < 15.4) color.lerp(wet, 0.48);
+    let shore = 0;
+    let wetness = 0;
+    for (const body of LAKES) {
+      const d = Math.hypot(x - body.x, z - body.z);
+      shore = Math.max(shore, 1 - smoothstep(body.r - 1.2, body.r + 8.5, d));
+      wetness = Math.max(wetness, 1 - smoothstep(body.r - 1.6, body.r + 1.5, d));
     }
+    const riverDist = distanceToRiver(x, z);
+    shore = Math.max(shore, 1 - smoothstep(RIVER_HALF_WIDTH, RIVER_HALF_WIDTH + 7.5, riverDist));
+    wetness = Math.max(wetness, 1 - smoothstep(RIVER_HALF_WIDTH - 0.8, RIVER_HALF_WIDTH + 1.5, riverDist));
+    color.lerp(sand, shore * 0.56);
+    if (wetness > 0) color.lerp(wet, wetness * 0.48);
 
     if (y > 4.2) {
       const rocky = smoothstep(4.2, 8.5, y);
@@ -443,19 +514,149 @@ function buildPathRibbon(curve, options) {
   return mesh;
 }
 
-buildPathRibbon(mainPathCurve, { width: 2.15, segments: 300 });
-buildPathRibbon(sidePathCurve, { width: 1.15, segments: 70, baseColor: 0x7d603e });
+buildPathRibbon(mainPathCurve, { width: 2.15, segments: 380 });
+buildPathRibbon(sidePathCurve, { width: 1.15, segments: 110, baseColor: 0x7d603e });
+buildPathRibbon(eastPathCurve, { width: 1.08, segments: 95, baseColor: 0x7b5e3d });
 
 /* --------------------------- Water ----------------------------- */
 
-function buildWater() {
+const lakeVertexShader = /* glsl */`
+  #include <common>
+  #include <fog_pars_vertex>
+  varying vec3 vWorld;
+  void main() {
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vWorld = worldPosition.xyz;
+    vec4 mvPosition = viewMatrix * worldPosition;
+    gl_Position = projectionMatrix * mvPosition;
+    #include <fog_vertex>
+  }
+`;
+
+const lakeFragmentShader = /* glsl */`
+  #include <common>
+  #include <fog_pars_fragment>
+  uniform float uTime;
+  uniform vec2 uCenter;
+  uniform float uRadius;
+  uniform vec3 uSunDir;
+  uniform vec3 uDeep;
+  uniform vec3 uShallow;
+  uniform vec3 uSky;
+  uniform vec3 uSunColor;
+  varying vec3 vWorld;
+
+  void main() {
+    vec2 p = vWorld.xz;
+    float ripple =
+      sin(p.x * 1.35 + uTime * 0.8) * 0.5 +
+      sin(p.y * 1.9 - uTime * 0.62) * 0.36 +
+      sin((p.x + p.y) * 0.7 + uTime * 0.34) * 0.24;
+    float ripple2 = cos(p.x * 2.8 - uTime * 0.9) * sin(p.y * 2.1 + uTime * 0.7);
+
+    vec3 n = normalize(vec3(ripple * 0.026 + ripple2 * 0.012, 1.0, ripple * 0.022));
+    vec3 viewDir = normalize(cameraPosition - vWorld);
+    float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.2);
+
+    float d = distance(p, uCenter);
+    float depthMix = smoothstep(0.0, uRadius * 0.86, d);
+    vec3 col = mix(uDeep, uShallow, depthMix * 0.7 + 0.18);
+    col = mix(col, uSky, fres * 0.58);
+
+    float spec = pow(max(dot(reflect(normalize(-uSunDir), n), viewDir), 0.0), 110.0);
+    col += uSunColor * spec * 1.35;
+
+    float shoreFoam = smoothstep(uRadius * 0.91, uRadius * 1.01, d);
+    col += vec3(0.28, 0.3, 0.24) * shoreFoam * 0.22;
+
+    gl_FragColor = vec4(col, 0.88);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+  }
+`;
+
+const riverFragmentShader = /* glsl */`
+  #include <common>
+  #include <fog_pars_fragment>
+  uniform float uTime;
+  uniform vec3 uSunDir;
+  uniform vec3 uDeep;
+  uniform vec3 uShallow;
+  uniform vec3 uSky;
+  uniform vec3 uSunColor;
+  varying vec3 vWorld;
+  varying vec2 vUv;
+
+  void main() {
+    vec2 p = vWorld.xz;
+    float edge = abs(vUv.x - 0.5) * 2.0;
+    float flow = sin(vUv.y * 37.0 - uTime * 2.15 + sin(vUv.x * 9.0 + uTime * 0.4) * 1.4);
+    float flow2 = cos(vUv.y * 17.0 - uTime * 1.35 + vUv.x * 5.0);
+    float ripple = sin(p.x * 2.4 + uTime) * 0.5 + sin(p.y * 3.8 - uTime * 0.8) * 0.35;
+
+    vec3 n = normalize(vec3(ripple * 0.018 + flow * 0.012, 1.0, ripple * 0.016 + flow2 * 0.01));
+    vec3 viewDir = normalize(cameraPosition - vWorld);
+    float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.0);
+
+    vec3 col = mix(uDeep, uShallow, 0.3 + (1.0 - edge) * 0.36);
+    col = mix(col, uSky, fres * 0.54);
+
+    float spec = pow(max(dot(reflect(normalize(-uSunDir), n), viewDir), 0.0), 95.0);
+    col += uSunColor * spec * 1.25;
+
+    float bankFoam = smoothstep(0.78, 1.0, edge);
+    col += vec3(0.3, 0.32, 0.26) * bankFoam * (0.2 + 0.1 * flow);
+
+    gl_FragColor = vec4(col, 0.9);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+  }
+`;
+
+function buildWaterBody(body) {
+  const uniforms = THREE.UniformsUtils.merge([
+    THREE.UniformsLib.fog,
+    {
+      uTime: { value: 0 },
+      uCenter: { value: new THREE.Vector2(body.x, body.z) },
+      uRadius: { value: body.r },
+      uSunDir: { value: sunDir.clone() },
+      uDeep: { value: new THREE.Color(0x214a3c) },
+      uShallow: { value: new THREE.Color(0x4c7057) },
+      uSky: { value: new THREE.Color(0xc7b38d) },
+      uSunColor: { value: new THREE.Color(0xffe0a7) }
+    }
+  ]);
+
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    transparent: true,
+    fog: true,
+    depthWrite: true,
+    side: THREE.DoubleSide,
+    vertexShader: lakeVertexShader,
+    fragmentShader: lakeFragmentShader
+  });
+
+  const mesh = new THREE.Mesh(new THREE.CircleGeometry(body.r - 0.08, isTouch ? 54 : 82), material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(body.x, WATER_LEVEL, body.z);
+  mesh.renderOrder = 2;
+  scene.add(mesh);
+
+  return { mesh, uniforms };
+}
+
+function buildRiverWater() {
   const uniforms = THREE.UniformsUtils.merge([
     THREE.UniformsLib.fog,
     {
       uTime: { value: 0 },
       uSunDir: { value: sunDir.clone() },
-      uDeep: { value: new THREE.Color(0x214a3c) },
-      uShallow: { value: new THREE.Color(0x4c7057) },
+      uDeep: { value: new THREE.Color(0x1c4034) },
+      uShallow: { value: new THREE.Color(0x54755a) },
       uSky: { value: new THREE.Color(0xc7b38d) },
       uSunColor: { value: new THREE.Color(0xffe0a7) }
     }
@@ -481,58 +682,45 @@ function buildWater() {
         #include <fog_vertex>
       }
     `,
-    fragmentShader: /* glsl */`
-      #include <common>
-      #include <fog_pars_fragment>
-      uniform float uTime;
-      uniform vec3 uSunDir;
-      uniform vec3 uDeep;
-      uniform vec3 uShallow;
-      uniform vec3 uSky;
-      uniform vec3 uSunColor;
-      varying vec3 vWorld;
-      varying vec2 vUv;
-
-      void main() {
-        vec2 p = vWorld.xz;
-        float ripple =
-          sin(p.x * 1.35 + uTime * 0.8) * 0.5 +
-          sin(p.y * 1.9 - uTime * 0.62) * 0.36 +
-          sin((p.x + p.y) * 0.7 + uTime * 0.34) * 0.24;
-        float ripple2 = cos(p.x * 2.8 - uTime * 0.9) * sin(p.y * 2.1 + uTime * 0.7);
-
-        vec3 n = normalize(vec3(ripple * 0.026 + ripple2 * 0.012, 1.0, ripple * 0.022));
-        vec3 viewDir = normalize(cameraPosition - vWorld);
-        float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.2);
-
-        float depthMix = smoothstep(0.0, 13.0, distance(p, vec2(${POND.x.toFixed(1)}, ${POND.z.toFixed(1)})));
-        vec3 col = mix(uDeep, uShallow, depthMix * 0.75 + 0.2);
-        col = mix(col, uSky, fres * 0.58);
-
-        float spec = pow(max(dot(reflect(normalize(-uSunDir), n), viewDir), 0.0), 110.0);
-        col += uSunColor * spec * 1.35;
-
-        float shoreFoam = smoothstep(14.4, 15.45, distance(p, vec2(${POND.x.toFixed(1)}, ${POND.z.toFixed(1)})));
-        col += vec3(0.28, 0.3, 0.24) * shoreFoam * 0.22;
-
-        gl_FragColor = vec4(col, 0.88);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-        #include <fog_fragment>
-      }
-    `
+    fragmentShader: riverFragmentShader
   });
 
-  const mesh = new THREE.Mesh(new THREE.CircleGeometry(POND.r - 0.12, 72), material);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.position.set(POND.x, WATER_LEVEL, POND.z);
-  mesh.renderOrder = 2;
-  scene.add(mesh);
+  const segments = 250;
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const p = riverCurve.getPointAt(t);
+    const tangent = riverCurve.getTangentAt(t);
+    const nx = -tangent.z;
+    const nz = tangent.x;
+    const wobble = 1 + Math.sin(t * 35.0) * 0.08 + Math.sin(t * 13.0 + 2.0) * 0.06;
+    const half = RIVER_HALF_WIDTH * wobble;
+    positions.push(
+      p.x + nx * half, WATER_LEVEL + 0.018, p.z + nz * half,
+      p.x - nx * half, WATER_LEVEL + 0.018, p.z - nz * half
+    );
+    uvs.push(0, t * 56, 1, t * 56);
+    if (i < segments) {
+      const a = i * 2;
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    }
+  }
 
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.renderOrder = 3;
+  scene.add(mesh);
   return { mesh, uniforms };
 }
 
-const water = buildWater();
+const lakeWaters = LAKES.map(buildWaterBody);
+const riverWater = buildRiverWater();
+const waterSurfaces = [...lakeWaters, riverWater];
 
 /* Lily pads */
 function buildLilyPads() {
@@ -540,7 +728,7 @@ function buildLilyPads() {
   const geometry = new THREE.CircleGeometry(0.46, 9);
   geometry.rotateX(-Math.PI / 2);
   const material = new THREE.MeshStandardMaterial({ color: 0x4e6d3a, roughness: 0.8, side: THREE.DoubleSide });
-  const count = 26;
+  const count = isTouch ? 30 : 48;
   const mesh = new THREE.InstancedMesh(geometry, material, count);
   const matrix = new THREE.Matrix4();
   const quat = new THREE.Quaternion();
@@ -548,9 +736,10 @@ function buildLilyPads() {
   const pos = new THREE.Vector3();
   const color = new THREE.Color();
   for (let i = 0; i < count; i++) {
+    const body = LAKES[Math.floor(rng() * LAKES.length)];
     const a = rng() * TAU;
-    const r = 2 + rng() * 10.5;
-    pos.set(POND.x + Math.cos(a) * r, WATER_LEVEL + 0.035, POND.z + Math.sin(a) * r);
+    const r = 2 + rng() * Math.max(1, body.r - 3.4);
+    pos.set(body.x + Math.cos(a) * r, WATER_LEVEL + 0.035, body.z + Math.sin(a) * r);
     quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * TAU);
     const s = 0.55 + rng() * 0.8;
     scale.set(s, 1, s);
@@ -578,7 +767,8 @@ function gridKey(x, z) {
 function canPlaceTree(x, z) {
   if (Math.hypot(x, z) > WORLD_RADIUS + 4) return false;
   if (distanceToPath(x, z) < 5.2) return false;
-  if (distanceToPond(x, z) < 17.3) return false;
+  if (lakeClearance(x, z) < 2.6) return false;
+  if (distanceToRiver(x, z) < RIVER_HALF_WIDTH + 2.8) return false;
   if (Math.hypot(x - GIANT_TREE.x, z - GIANT_TREE.z) < 14.5) return false;
   if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 8.5) return false;
   const cx = Math.floor(x / TREE_CELL), cz = Math.floor(z / TREE_CELL);
@@ -612,8 +802,9 @@ function buildForest() {
   const rng = mulberry32(41723);
   const trees = [];
   let attempts = 0;
+  const targetTrees = isTouch ? 760 : 1180;
 
-  while (trees.length < 860 && attempts < 16000) {
+  while (trees.length < targetTrees && attempts < 26000) {
     attempts++;
     const a = rng() * TAU;
     const r = Math.sqrt(rng()) * (WORLD_RADIUS + 3);
@@ -866,7 +1057,8 @@ function buildRocks() {
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
     if (distanceToPath(x, z) < 2.8) continue;
-    if (distanceToPond(x, z) < 14.6) continue;
+    if (lakeClearance(x, z) < 2.2) continue;
+    if (distanceToRiver(x, z) < RIVER_HALF_WIDTH + 2.0) continue;
     if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 2.5) continue;
 
     const sx = 0.35 + rng() * 1.85;
@@ -887,15 +1079,10 @@ function buildRocks() {
     count++;
   }
 
-  /* Shoreline stones around the pond. */
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * TAU + rng() * 0.2;
-    const rr = POND.r + 0.3 + rng() * 2.2;
-    const x = POND.x + Math.cos(a) * rr;
-    const z = POND.z + Math.sin(a) * rr;
-    const sx = 0.55 + rng() * 1.4;
-    const sy = 0.3 + rng() * 0.8;
-    const sz = 0.55 + rng() * 1.4;
+  const addShoreStone = (x, z, size = 1) => {
+    const sx = (0.55 + rng() * 1.4) * size;
+    const sy = (0.3 + rng() * 0.8) * size;
+    const sz = (0.55 + rng() * 1.4) * size;
     euler.set(rng() * 0.5, rng() * TAU, rng() * 0.5, 'YXZ');
     quat.setFromEuler(euler);
     pos.set(x, terrainHeight(x, z) + sy * 0.25, z);
@@ -905,6 +1092,25 @@ function buildRocks() {
     color.set(rng() < 0.5 ? mossy : grays[Math.floor(rng() * grays.length)]);
     colors.push(color.clone());
     if (sx > 1.1) treeColliders.push({ x, z, r: sx * 0.7 });
+  };
+
+  /* Shoreline stones for every basin. */
+  for (const body of LAKES) {
+    const stones = Math.round(body.r * 1.25);
+    for (let i = 0; i < stones; i++) {
+      const a = (i / stones) * TAU + rng() * 0.2;
+      const rr = body.r + 0.1 + rng() * 2.4;
+      addShoreStone(body.x + Math.cos(a) * rr, body.z + Math.sin(a) * rr);
+    }
+  }
+
+  /* A broken line of stones along the riverbank. */
+  for (let i = 6; i < riverSamples.length - 6; i += 4) {
+    const p = riverSamples[i];
+    const tangent = riverCurve.getTangentAt(i / (riverSamples.length - 1));
+    const side = (i % 8 === 0 ? 1 : -1);
+    const rr = RIVER_HALF_WIDTH + 1.2 + rng() * 2.8;
+    addShoreStone(p.x - tangent.z * rr * side, p.z + tangent.x * rr * side, 0.72 + rng() * 0.35);
   }
 
   const mesh = new THREE.InstancedMesh(geometry, rockMaterial, matrices.length);
@@ -931,7 +1137,10 @@ function buildLogs() {
   const moss = new THREE.MeshStandardMaterial({ color: 0x526b3a, roughness: 1, flatShading: true });
   const geometry = new THREE.CylinderGeometry(0.36, 0.48, 1, 7, 1);
   geometry.rotateZ(Math.PI / 2);
-  const spots = [[12, 47], [-15, 33], [18, 8], [-13, -8], [20, -34], [-22, -52], [30, -52], [-9, 70]];
+  const spots = [
+    [12, 47], [-15, 33], [18, 8], [-13, -8], [20, -34], [-22, -52], [30, -52], [-9, 70],
+    [52, -104], [102, 18], [-58, 92], [-28, -108], [96, -28], [-64, -74]
+  ];
   for (const [x, z] of spots) {
     const length = 4 + rng() * 5.5;
     const mesh = new THREE.Mesh(geometry, rng() < 0.35 ? moss : bark);
@@ -1089,7 +1298,7 @@ function buildGroundCover() {
   const scl = new THREE.Vector3();
   const color = new THREE.Color();
 
-  const grassCount = isTouch ? 3800 : 6200;
+  const grassCount = isTouch ? 4300 : 7200;
   const grass = new THREE.InstancedMesh(grassGeo, grassMat, grassCount);
   let placed = 0, attempts = 0;
   while (placed < grassCount && attempts < grassCount * 6) {
@@ -1099,7 +1308,8 @@ function buildGroundCover() {
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
     if (distanceToPath(x, z) < 2.55) continue;
-    if (distanceToPond(x, z) < 14.8) continue;
+    if (lakeClearance(x, z) < 1.6) continue;
+    if (distanceToRiver(x, z) < RIVER_HALF_WIDTH + 1.2) continue;
     const y = terrainHeight(x, z);
     pos.set(x, y + 0.01, z);
     quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * TAU);
@@ -1116,7 +1326,7 @@ function buildGroundCover() {
   grass.frustumCulled = false;
   scene.add(grass);
 
-  const fernCount = isTouch ? 360 : 760;
+  const fernCount = isTouch ? 420 : 880;
   const ferns = new THREE.InstancedMesh(fernGeo, fernMat, fernCount);
   placed = 0; attempts = 0;
   while (placed < fernCount && attempts < fernCount * 8) {
@@ -1126,7 +1336,8 @@ function buildGroundCover() {
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
     if (distanceToPath(x, z) < 3.1) continue;
-    if (distanceToPond(x, z) < 14.6) continue;
+    if (lakeClearance(x, z) < 1.5) continue;
+    if (distanceToRiver(x, z) < RIVER_HALF_WIDTH + 1.0) continue;
     if (hash(x * 2.1, z * 1.9) < 0.35) continue;
     const y = terrainHeight(x, z);
     pos.set(x, y + 0.01, z);
@@ -1155,7 +1366,7 @@ function buildLeafLitter() {
   const geo = new THREE.PlaneGeometry(0.24, 0.15);
   geo.rotateX(-Math.PI / 2);
   const mat = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: 1, metalness: 0 });
-  const count = isTouch ? 900 : 1800;
+  const count = isTouch ? 1000 : 2100;
   const mesh = new THREE.InstancedMesh(geo, mat, count);
   const matrix = new THREE.Matrix4();
   const quat = new THREE.Quaternion();
@@ -1170,7 +1381,8 @@ function buildLeafLitter() {
     const r = Math.sqrt(rng()) * (WORLD_RADIUS + 1);
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
-    if (distanceToPond(x, z) < 14.7) continue;
+    if (lakeClearance(x, z) < 1.4) continue;
+    if (distanceToRiver(x, z) < RIVER_HALF_WIDTH + 1.0) continue;
     pos.set(x, terrainHeight(x, z) + 0.025, z);
     quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * TAU);
     const s = 0.7 + rng() * 1.3;
@@ -1344,8 +1556,8 @@ function buildParticles(options) {
 const dust = buildParticles({
   count: isTouch ? 380 : 880,
   origin: { x: 0, y: 0.5, z: 0 },
-  spread: 86,
-  height: 12,
+  spread: 132,
+  height: 14,
   colorA: 0xfff1cf,
   colorB: 0xffd99b,
   sizeMin: 0.015,
@@ -1386,12 +1598,18 @@ const pathFireflies = buildParticles({
 /* --------------------------- Regions --------------------------- */
 
 const regions = [
-  { name: 'The Lantern Path', x: 0, z: 52, r: 38 },
+  { name: 'The Lantern Path', x: 0, z: 52, r: 40 },
+  { name: 'Northreach Trail', x: 0, z: 108, r: 31 },
   { name: 'The Sunken Pool', x: POND.x, z: POND.z, r: 25 },
   { name: 'The Elder', x: GIANT_TREE.x, z: GIANT_TREE.z, r: 20 },
   { name: 'Mosslight Glade', x: 30, z: -10, r: 24 },
   { name: 'Whispering Ridge', x: 18, z: -66, r: 27 },
-  { name: 'The Western Reach', x: -68, z: -18, r: 25 }
+  { name: 'The Western Reach', x: -68, z: -18, r: 25 },
+  { name: 'Mirror Lake', x: LAKES[1].x, z: LAKES[1].z, r: 30 },
+  { name: 'Larkspur Lake', x: LAKES[2].x, z: LAKES[2].z, r: 28 },
+  { name: 'Blackwater Fen', x: LAKES[3].x, z: LAKES[3].z, r: 34 },
+  { name: 'The Long River', x: -108, z: 10, r: 27 },
+  { name: 'Southwatch', x: 0, z: -126, r: 31 }
 ];
 
 let currentRegionName = '';
@@ -1535,6 +1753,458 @@ function setMuted(muted) {
   const t = audio.ctx.currentTime;
   audio.master.gain.cancelScheduledValues(t);
   audio.master.gain.setTargetAtTime(muted ? 0 : 0.55, t, 0.08);
+}
+
+/* ------------------------ Blunderbuss -------------------------- */
+
+const weapon = {
+  equipped: true,
+  loaded: true,
+  reloading: false,
+  firing: false,
+  reloadTime: 0,
+  reloadDuration: 2.55,
+  fireTime: 0,
+  recoil: 0,
+  cameraKick: 0,
+  flashTime: 0,
+  equipBlend: 0
+};
+
+const weaponRig = new THREE.Group();
+weaponRig.visible = false;
+weaponRig.position.set(0.36, -0.35, -0.68);
+weaponRig.rotation.set(0.015, 0.13, -0.025);
+camera.add(weaponRig);
+
+const gun = new THREE.Group();
+weaponRig.add(gun);
+
+const gunWood = new THREE.MeshStandardMaterial({
+  color: 0x62391e, roughness: 0.72, metalness: 0.02, flatShading: true,
+  emissive: 0x160b04, emissiveIntensity: 0.35
+});
+const gunWoodDark = new THREE.MeshStandardMaterial({
+  color: 0x3c2414, roughness: 0.8, metalness: 0.01, flatShading: true,
+  emissive: 0x0d0602, emissiveIntensity: 0.3
+});
+const gunMetal = new THREE.MeshStandardMaterial({
+  color: 0x3b4240, roughness: 0.4, metalness: 0.72, flatShading: true,
+  emissive: 0x090c0b, emissiveIntensity: 0.25
+});
+const gunBrass = new THREE.MeshStandardMaterial({
+  color: 0xa97739, roughness: 0.38, metalness: 0.72, flatShading: true,
+  emissive: 0x1b1004, emissiveIntensity: 0.3
+});
+const skin = new THREE.MeshStandardMaterial({
+  color: 0xb97952, roughness: 0.82, metalness: 0, flatShading: true,
+  emissive: 0x1d0e08, emissiveIntensity: 0.22
+});
+const sleeve = new THREE.MeshStandardMaterial({
+  color: 0x3c4e33, roughness: 0.94, metalness: 0, flatShading: true,
+  emissive: 0x090d07, emissiveIntensity: 0.22
+});
+const cuff = new THREE.MeshStandardMaterial({
+  color: 0x2a3726, roughness: 0.96, metalness: 0, flatShading: true
+});
+
+function gunBox(w, h, d, material, x, y, z, rx = 0, ry = 0, rz = 0, parent = gun) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  mesh.position.set(x, y, z);
+  mesh.rotation.set(rx, ry, rz);
+  parent.add(mesh);
+  return mesh;
+}
+
+function gunCylinder(radiusTop, radiusBottom, length, material, x, y, z, parent = gun) {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radiusTop, radiusBottom, length, 8, 1), material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(x, y, z);
+  parent.add(mesh);
+  return mesh;
+}
+
+/* Blocky stock, receiver, flared barrel and brass furniture. */
+gunBox(0.17, 0.15, 0.24, gunMetal, 0, 0, -0.07);
+gunBox(0.15, 0.15, 0.32, gunWood, 0, -0.03, 0.16, -0.08);
+gunBox(0.2, 0.24, 0.37, gunWoodDark, 0, -0.085, 0.39, -0.19);
+gunBox(0.205, 0.05, 0.31, gunWood, 0, -0.19, 0.34, -0.19);
+gunBox(0.03, 0.13, 0.08, gunMetal, 0.015, 0.08, 0.13, 0, 0, 0.36);
+gunBox(0.03, 0.09, 0.03, gunMetal, 0.015, -0.11, 0.05, 0.25);
+gunBox(0.018, 0.018, 0.16, gunMetal, 0, -0.155, 0.01);
+gunBox(0.012, 0.015, 0.14, gunBrass, 0.092, -0.015, 0.0);
+gunCylinder(0.09, 0.06, 0.82, gunMetal, 0, 0.04, -0.58);
+gunCylinder(0.13, 0.088, 0.19, gunMetal, 0, 0.04, -1.075);
+gunCylinder(0.072, 0.072, 0.035, gunBrass, 0, 0.04, -0.31);
+gunCylinder(0.077, 0.077, 0.035, gunBrass, 0, 0.04, -0.75);
+gunCylinder(0.098, 0.098, 0.03, gunBrass, 0, 0.04, -0.99);
+gunCylinder(0.012, 0.012, 0.67, gunMetal, 0, -0.015, -0.52);
+gunBox(0.02, 0.016, 0.24, gunMetal, 0, 0.128, -0.54);
+
+const muzzle = new THREE.Object3D();
+muzzle.position.set(0, 0.04, -1.18);
+gun.add(muzzle);
+
+const flashMaterial = new THREE.SpriteMaterial({
+  map: sunTexture,
+  color: 0xffb15e,
+  transparent: true,
+  opacity: 0.95,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  depthTest: false,
+  fog: false,
+  toneMapped: false
+});
+const muzzleFlash = new THREE.Sprite(flashMaterial);
+muzzleFlash.scale.set(0.62, 0.62, 1);
+muzzleFlash.visible = false;
+muzzleFlash.renderOrder = 40;
+muzzle.add(muzzleFlash);
+
+const muzzleLight = new THREE.PointLight(0xffb064, 0, 5, 2);
+muzzle.add(muzzleLight);
+
+/* Blocky hands and arms. */
+function makeHand(flip = 1) {
+  const hand = new THREE.Group();
+  gunBox(0.11, 0.075, 0.15, skin, 0, 0, 0, 0, 0, 0, hand);
+  for (let i = 0; i < 3; i++) {
+    gunBox(0.026, 0.05, 0.11, skin, (-0.038 + i * 0.038) * flip, 0.045, -0.045, 0.2, 0, 0, hand);
+  }
+  gunBox(0.032, 0.045, 0.08, skin, 0.065 * flip, 0.024, -0.015, 0, 0, -0.55 * flip, hand);
+  return hand;
+}
+
+const leftHand = makeHand(1);
+leftHand.position.set(-0.035, -0.11, -0.48);
+leftHand.rotation.set(-0.25, 0.18, -0.18);
+weaponRig.add(leftHand);
+
+const rightHand = makeHand(-1);
+rightHand.position.set(0.035, -0.12, 0.12);
+rightHand.rotation.set(-0.12, -0.1, 0.65);
+weaponRig.add(rightHand);
+
+const armGeoWidth = 0.13;
+const leftUpperArm = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 1), sleeve);
+const rightUpperArm = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 1), sleeve);
+const leftForearm = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 1), skin);
+const rightForearm = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 1), skin);
+weaponRig.add(leftUpperArm, rightUpperArm, leftForearm, rightForearm);
+
+const leftCuff = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.145, 0.11), cuff);
+const rightCuff = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.145, 0.11), cuff);
+weaponRig.add(leftCuff, rightCuff);
+
+const leftShoulder = new THREE.Vector3(-0.52, -0.72, 0.26);
+const leftElbow = new THREE.Vector3(-0.29, -0.37, -0.07);
+const rightShoulder = new THREE.Vector3(0.66, -0.76, 0.36);
+const rightElbow = new THREE.Vector3(0.32, -0.39, 0.13);
+const rightGrip = new THREE.Vector3(0.035, -0.12, 0.12);
+const leftIdle = new THREE.Vector3(-0.035, -0.11, -0.48);
+const leftReloadReach = new THREE.Vector3(-0.015, 0.035, -0.92);
+
+function poseLimb(mesh, from, to) {
+  const direction = to.clone().sub(from);
+  const length = direction.length();
+  mesh.position.copy(from).add(to).multiplyScalar(0.5);
+  mesh.scale.z = length;
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction.normalize());
+}
+
+function poseCuff(mesh, from, to, offset = 0.72) {
+  mesh.position.copy(from).lerp(to, offset);
+  mesh.quaternion.copy(mesh.quaternion.identity());
+}
+
+poseLimb(leftUpperArm, leftShoulder, leftElbow);
+poseLimb(rightUpperArm, rightShoulder, rightElbow);
+poseLimb(rightForearm, rightElbow, rightGrip);
+poseLimb(leftForearm, leftElbow, leftIdle);
+poseCuff(leftCuff, leftElbow, leftIdle);
+poseCuff(rightCuff, rightElbow, rightGrip);
+
+/* Soft smoke billboards for the muzzle. */
+const smokeTexture = makeCanvasTexture(128, 128, (ctx, w, h) => {
+  const g = ctx.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, w * 0.5);
+  g.addColorStop(0, 'rgba(236,226,204,0.62)');
+  g.addColorStop(0.42, 'rgba(208,199,179,0.32)');
+  g.addColorStop(1, 'rgba(188,181,163,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+});
+const smokePuffs = [];
+for (let i = 0; i < 9; i++) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: smokeTexture,
+    color: 0xd6cdb8,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    fog: false,
+    toneMapped: false
+  }));
+  sprite.visible = false;
+  sprite.scale.setScalar(0.08);
+  camera.add(sprite);
+  smokePuffs.push({ sprite, life: 0, maxLife: 1, velocity: new THREE.Vector3() });
+}
+let smokeCursor = 0;
+const muzzleLocal = new THREE.Vector3();
+const smokeSpawn = new THREE.Vector3();
+
+function spawnSmoke() {
+  muzzle.getWorldPosition(muzzleLocal);
+  camera.worldToLocal(muzzleLocal);
+  for (let i = 0; i < 4; i++) {
+    const puff = smokePuffs[smokeCursor++ % smokePuffs.length];
+    puff.sprite.position.copy(muzzleLocal).add(new THREE.Vector3(
+      (Math.random() - 0.5) * 0.035,
+      (Math.random() - 0.5) * 0.035,
+      (Math.random() - 0.5) * 0.035
+    ));
+    puff.sprite.scale.setScalar(0.045 + Math.random() * 0.045);
+    puff.sprite.material.opacity = 0.48;
+    puff.sprite.visible = true;
+    puff.life = puff.maxLife = 0.75 + Math.random() * 0.55;
+    puff.velocity.set(
+      (Math.random() - 0.35) * 0.09,
+      0.05 + Math.random() * 0.06,
+      -0.16 - Math.random() * 0.18
+    );
+  }
+}
+
+function updateSmoke(dt) {
+  for (const puff of smokePuffs) {
+    if (!puff.sprite.visible) continue;
+    puff.life -= dt;
+    if (puff.life <= 0) {
+      puff.sprite.visible = false;
+      continue;
+    }
+    const t = puff.life / puff.maxLife;
+    puff.sprite.position.addScaledVector(puff.velocity, dt);
+    puff.velocity.y += 0.035 * dt;
+    puff.velocity.multiplyScalar(1 - dt * 0.9);
+    puff.sprite.scale.addScalar(dt * 0.13);
+    puff.sprite.material.opacity = 0.45 * t * t;
+    puff.sprite.material.rotation += dt * 0.35;
+  }
+}
+
+/* Shot and reload audio, synthesized so the build stays asset-free. */
+function playBlunderbussShot() {
+  if (!audio.ctx || audio.muted) return;
+  const ctx = audio.ctx;
+  const t = ctx.currentTime;
+  const src = ctx.createBufferSource();
+  src.buffer = audio.noiseBuffer;
+  src.playbackRate.value = 0.62;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(1550, t);
+  filter.frequency.exponentialRampToValueAtTime(180, t + 0.55);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.linearRampToValueAtTime(0.58, t + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.62);
+  src.connect(filter).connect(gain).connect(audio.master);
+  src.start(t, Math.random() * 2.4, 0.7);
+
+  const thump = ctx.createOscillator();
+  const thumpGain = ctx.createGain();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(105, t);
+  thump.frequency.exponentialRampToValueAtTime(33, t + 0.34);
+  thumpGain.gain.setValueAtTime(0.0001, t);
+  thumpGain.gain.linearRampToValueAtTime(0.32, t + 0.012);
+  thumpGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+  thump.connect(thumpGain).connect(audio.master);
+  thump.start(t);
+  thump.stop(t + 0.44);
+}
+
+function playReloadClick(delay = 0) {
+  if (!audio.ctx || audio.muted) return;
+  const ctx = audio.ctx;
+  const t = ctx.currentTime + delay;
+  const src = ctx.createBufferSource();
+  src.buffer = audio.noiseBuffer;
+  src.playbackRate.value = 1.2;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 1800 + Math.random() * 900;
+  filter.Q.value = 2.4;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.linearRampToValueAtTime(0.085, t + 0.006);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+  src.connect(filter).connect(gain).connect(audio.master);
+  src.start(t, Math.random() * 2.4, 0.12);
+}
+
+function updateWeaponUI() {
+  const stowed = !weapon.equipped;
+  itemSlot.classList.toggle('is-stowed', stowed);
+  itemSlot.setAttribute('aria-pressed', String(weapon.equipped));
+  itemSlot.setAttribute('aria-label', stowed
+    ? 'Blunderbuss stowed. Click to equip.'
+    : 'Blunderbuss equipped. Click to stow.');
+  itemState.textContent = stowed ? 'Stowed' : (weapon.reloading ? 'Reloading' : (weapon.loaded ? 'Equipped' : 'Empty'));
+  itemSwitch.textContent = stowed ? 'Equip' : 'Stow';
+  document.body.classList.toggle('weapon-stowed', stowed);
+  document.body.classList.toggle('weapon-reloading', weapon.reloading);
+  document.body.classList.toggle('weapon-empty', weapon.equipped && !weapon.loaded && !weapon.reloading);
+}
+
+function setBlunderbussEquipped(equipped) {
+  if (weapon.equipped === equipped) return;
+  weapon.equipped = equipped;
+  if (!equipped) {
+    weapon.reloading = false;
+    weapon.firing = false;
+    weapon.flashTime = 0;
+    muzzleFlash.visible = false;
+    muzzleLight.intensity = 0;
+    itemProgress.style.width = '0%';
+  }
+  updateWeaponUI();
+  showToast(equipped ? 'Blunderbuss equipped.' : 'Blunderbuss stowed.', 1700);
+}
+
+function startReload() {
+  if (!started || settingsOpen || !weapon.equipped || weapon.reloading) return;
+  weapon.reloading = true;
+  weapon.reloadTime = 0;
+  weapon.loaded = false;
+  weapon.firing = false;
+  weapon.recoil = 0;
+  weapon.flashTime = 0;
+  muzzleFlash.visible = false;
+  muzzleLight.intensity = 0;
+  playReloadClick(0.16);
+  playReloadClick(0.98);
+  playReloadClick(1.86);
+  updateWeaponUI();
+}
+
+function fireBlunderbuss() {
+  if (!started || settingsOpen || !weapon.equipped || !weapon.loaded || weapon.reloading || weapon.firing) return;
+  weapon.loaded = false;
+  weapon.firing = true;
+  weapon.fireTime = 0;
+  weapon.recoil = 1;
+  weapon.cameraKick = 1;
+  weapon.flashTime = 0.095;
+  muzzleFlash.visible = true;
+  muzzleFlash.material.rotation = Math.random() * TAU;
+  muzzleFlash.scale.setScalar(0.58 + Math.random() * 0.18);
+  muzzleLight.intensity = 28;
+  spawnSmoke();
+  playBlunderbussShot();
+  updateWeaponUI();
+}
+
+function updateWeapon(dt, time) {
+  if (!started) {
+    weaponRig.visible = false;
+    return;
+  }
+
+  weapon.equipBlend = damp(weapon.equipBlend, weapon.equipped ? 1 : 0, 11, dt);
+  weaponRig.visible = weapon.equipBlend > 0.015;
+  if (!weaponRig.visible) {
+    updateSmoke(dt);
+    return;
+  }
+  if (settingsOpen) {
+    muzzleFlash.visible = false;
+    muzzleLight.intensity = 0;
+    return;
+  }
+
+  weapon.cameraKick = damp(weapon.cameraKick, 0, 8.5, dt);
+  weapon.recoil = damp(weapon.recoil, 0, 11, dt);
+
+  if (weapon.firing) {
+    weapon.fireTime += dt;
+    if (weapon.fireTime > 0.4) {
+      weapon.firing = false;
+      if (!weapon.loaded) startReload();
+    }
+  }
+
+  let reloadT = 0;
+  if (weapon.reloading) {
+    weapon.reloadTime += dt;
+    reloadT = clamp(weapon.reloadTime / weapon.reloadDuration, 0, 1);
+    itemProgress.style.width = `${reloadT * 100}%`;
+    if (reloadT >= 1) {
+      weapon.reloading = false;
+      weapon.loaded = true;
+      weapon.reloadTime = 0;
+      itemProgress.style.width = '0%';
+      updateWeaponUI();
+    }
+  } else {
+    itemProgress.style.width = '0%';
+  }
+
+  if (!weapon.loaded && !weapon.reloading && !weapon.firing && weapon.equipBlend > 0.88) {
+    startReload();
+  }
+
+  const draw = 1 - weapon.equipBlend;
+  const bob = Math.sin(player.bobPhase * 2) * player.bobAmount * 0.55;
+  const sway = Math.cos(player.bobPhase) * player.bobAmount * 0.45;
+  const breathe = Math.sin(time * 1.3) * 0.004;
+
+  weaponRig.position.set(
+    0.36 + sway,
+    -0.35 + bob + breathe - draw * 0.48,
+    -0.68 + weapon.recoil * 0.13
+  );
+  weaponRig.rotation.set(
+    0.015 - weapon.recoil * 0.16 + draw * 0.35,
+    0.13,
+    -0.025 + weapon.recoil * 0.035
+  );
+
+  const reloadArc = weapon.reloading ? Math.sin(reloadT * Math.PI) : 0;
+  gun.rotation.x = reloadArc * 0.24;
+  gun.rotation.z = reloadArc * 0.16;
+  gun.position.y = reloadArc * 0.035;
+  gun.position.z = reloadArc * 0.025;
+
+  const handTarget = leftIdle.clone();
+  if (weapon.reloading) {
+    const reach = smoothstep(0.06, 0.34, reloadT) * (1 - smoothstep(0.68, 0.94, reloadT));
+    handTarget.lerp(leftReloadReach, reach * 0.92);
+    handTarget.y += Math.sin(reloadT * Math.PI * 9) * 0.026 * reach;
+    handTarget.z += Math.sin(reloadT * Math.PI * 7) * 0.03 * reach;
+  }
+  leftHand.position.copy(handTarget);
+  leftHand.rotation.set(-0.25 + reloadArc * 0.4, 0.18, -0.18 - reloadArc * 0.3);
+  leftForearm.scale.z = Math.max(0.08, leftElbow.distanceTo(handTarget));
+  poseLimb(leftForearm, leftElbow, handTarget);
+  poseCuff(leftCuff, leftElbow, handTarget);
+
+  const flashOn = weapon.flashTime > 0;
+  if (flashOn) {
+    weapon.flashTime = Math.max(0, weapon.flashTime - dt);
+    const f = weapon.flashTime / 0.095;
+    muzzleFlash.visible = true;
+    muzzleFlash.material.opacity = 0.95 * f;
+    muzzleFlash.scale.setScalar(0.58 + (1 - f) * 0.7);
+    muzzleLight.intensity = 28 * f;
+  } else {
+    muzzleFlash.visible = false;
+    muzzleLight.intensity = 0;
+  }
+
+  updateSmoke(dt);
 }
 
 /* --------------------------- Player ---------------------------- */
@@ -1700,8 +2370,8 @@ function applyQuality(mode, announce = false) {
 
   renderer.shadowMap.enabled = !potato;
   sun.castShadow = !potato;
-  scene.fog.density = potato ? 0.024 : 0.0138;
-  camera.far = potato ? 160 : 260;
+  scene.fog.density = potato ? 0.022 : 0.0107;
+  camera.far = potato ? 185 : 300;
   renderer.toneMappingExposure = potato ? 1.3 : 1.26;
   camera.updateProjectionMatrix();
 
@@ -1767,6 +2437,10 @@ function openSettings() {
   settingsPanel.classList.add('is-open');
   settingsPanel.setAttribute('aria-hidden', 'false');
   document.body.classList.add('settings-open');
+  weapon.cameraKick = 0;
+  weapon.flashTime = 0;
+  muzzleFlash.visible = false;
+  muzzleLight.intensity = 0;
   if (document.pointerLockElement) document.exitPointerLock();
   $('resumeBtn').textContent = started ? 'Resume exploring' : 'Back to the trailhead';
   updateBodyState();
@@ -1796,6 +2470,8 @@ function startRun(mode) {
   startScreen.setAttribute('aria-hidden', 'true');
   document.activeElement?.blur?.();
   clock.getDelta();
+  weapon.equipBlend = 0;
+  updateWeaponUI();
   renderer.setAnimationLoop(animate);
   initAudio();
   setMuted(audio.muted);
@@ -1830,6 +2506,16 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.code === 'KeyP') {
     applyQuality(currentQuality === 'potato' ? 'high' : 'potato', true);
+  }
+  if (event.code === 'Digit1' || event.code === 'KeyF') {
+    event.preventDefault();
+    if (!event.repeat) setBlunderbussEquipped(!weapon.equipped);
+    return;
+  }
+  if (event.code === 'KeyR') {
+    event.preventDefault();
+    if (!event.repeat && !weapon.loaded) startReload();
+    return;
   }
   keys.add(event.code);
 });
@@ -1867,7 +2553,10 @@ canvas.addEventListener('pointerdown', (event) => {
   }
 
   if (event.button !== 0) return;
-  if (document.pointerLockElement === canvas) return;
+  if (document.pointerLockElement === canvas) {
+    fireBlunderbuss();
+    return;
+  }
   mouseDragging = true;
   requestPointerLock();
 });
@@ -1992,10 +2681,22 @@ jumpBtn.addEventListener('pointerup', releaseJump);
 jumpBtn.addEventListener('pointercancel', releaseJump);
 jumpBtn.addEventListener('pointerleave', releaseJump);
 
+fireBtn.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  fireBtn.classList.add('is-pressed');
+  fireBlunderbuss();
+});
+function releaseFire() { fireBtn.classList.remove('is-pressed'); }
+fireBtn.addEventListener('pointerup', releaseFire);
+fireBtn.addEventListener('pointercancel', releaseFire);
+fireBtn.addEventListener('pointerleave', releaseFire);
+
 /* ------------------------- UI bindings ------------------------- */
 
 $('potatoBtn').addEventListener('click', () => startRun('potato'));
 $('highBtn').addEventListener('click', () => startRun('high'));
+itemSlot.addEventListener('click', () => setBlunderbussEquipped(!weapon.equipped));
 $('settingsBtn').addEventListener('click', openSettings);
 $('closeSettingsBtn').addEventListener('click', closeSettings);
 $('resumeBtn').addEventListener('click', closeSettings);
@@ -2121,8 +2822,8 @@ function updatePlayer(dt) {
   resolveCollisions();
 
   const terrainY = terrainHeight(player.x, player.z);
-  const inPond = distanceToPond(player.x, player.z) < POND.r + 1.4 && terrainY < WATER_LEVEL - 0.15;
-  player.wading = inPond;
+  const inWater = isWaterAt(player.x, player.z, terrainY);
+  player.wading = inWater;
 
   if (player.jumpQueued) {
     if (player.onGround) {
@@ -2134,7 +2835,7 @@ function updatePlayer(dt) {
   }
 
   if (player.onGround) {
-    const support = inPond ? Math.max(terrainY, WATER_LEVEL - 1.12) : terrainY;
+    const support = inWater ? Math.max(terrainY, WATER_LEVEL - 1.12) : terrainY;
     if (player.feetY > support + 0.55) {
       player.onGround = false;
     } else {
@@ -2145,7 +2846,7 @@ function updatePlayer(dt) {
   if (!player.onGround) {
     player.vy -= 19.5 * dt;
     player.feetY += player.vy * dt;
-    const support = inPond ? Math.max(terrainY, WATER_LEVEL - 1.12) : terrainY;
+    const support = inWater ? Math.max(terrainY, WATER_LEVEL - 1.12) : terrainY;
     if (player.feetY <= support) {
       player.feetY = support;
       player.vy = 0;
@@ -2198,8 +2899,13 @@ function updateCamera(time, dt) {
     z - sway * Math.sin(yaw) * 0.35
   );
   camera.rotation.y = yaw;
-  camera.rotation.x = pitch;
-  camera.rotation.z = damp(camera.rotation.z, -player.vx * 0.0016 * Math.cos(yaw) + Math.sin(player.bobPhase) * player.bobAmount * 0.09, 8, dt);
+  camera.rotation.x = pitch + weapon.cameraKick * 0.018;
+  camera.rotation.z = damp(
+    camera.rotation.z,
+    -player.vx * 0.0016 * Math.cos(yaw) + Math.sin(player.bobPhase) * player.bobAmount * 0.09,
+    8,
+    dt
+  ) + weapon.cameraKick * 0.008 * Math.sin(time * 53);
 
   const sprinting = started && !isTouch && keys.has('ShiftLeft') && horizontalSpeed > 3.5;
   const targetFov = sprinting ? 71.5 : 68;
@@ -2224,7 +2930,7 @@ const windSound = { value: 0 };
 
 function updateWorld(time, dt) {
   windUniform.value = time;
-  water.uniforms.uTime.value = time;
+  for (const surface of waterSurfaces) surface.uniforms.uTime.value = time;
   dust.material.uniforms.uTime.value = time;
   fireflies.material.uniforms.uTime.value = time;
   pathFireflies.material.uniforms.uTime.value = time;
@@ -2265,6 +2971,7 @@ function animate() {
 
   updatePlayer(dt);
   updateCamera(time, dt);
+  updateWeapon(dt, time);
   updateWorld(time, dt);
 
   compassAccum += dt;

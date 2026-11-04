@@ -57,6 +57,7 @@
     <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</span>
     <span><kbd>Shift</kbd> Sprint</span>
     <span><kbd>Space</kbd> Jump</span>
+    <span><kbd>1</kbd> Blunderbuss</span>
     <span><kbd>Esc</kbd> Settings</span>
   </div>
 
@@ -71,9 +72,35 @@
       </span>
       <span class="joystick-caption">MOVE</span>
     </div>
+    <button id="fireBtn" class="fire-btn" type="button" aria-label="Fire Blunderbuss">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="12" r="2.4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+      <span>FIRE</span>
+    </button>
     <button id="jumpBtn" class="jump-btn" type="button" aria-label="Jump">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6m0 0-5 5m5-5 5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span>JUMP</span>
+    </button>
+  </div>
+
+  <!-- Equippable field kit -->
+  <div id="itemDock" class="item-dock">
+    <button id="blunderbussSlot" class="item-slot" type="button" aria-label="Blunderbuss equipped. Click to stow." aria-pressed="true">
+      <span class="item-key">1</span>
+      <span class="item-art" aria-hidden="true">
+        <svg viewBox="0 0 64 64">
+          <path d="M5 45c4-4 8-5 15-5l7-5 21-9 2 5-12 7-5 8-7 3-4-5-9 1-5 5-3-5Z" fill="currentColor"/>
+          <path d="M48 31 60 23l2 5-12 8Z" fill="currentColor" opacity=".65"/>
+          <path d="M26 34c4-2 7-1 9 2" fill="none" stroke="#0d1710" stroke-width="1.8" stroke-linecap="round"/>
+          <circle cx="37" cy="37" r="2.2" fill="#0d1710"/>
+        </svg>
+      </span>
+      <span class="item-copy">
+        <span class="item-name">Blunderbuss</span>
+        <span class="item-state" id="itemState">Equipped</span>
+        <span class="item-hint">LMB fire &middot; R reload</span>
+      </span>
+      <span class="item-switch" id="itemSwitch">Stow</span>
+      <span class="item-progress" id="itemProgressWrap"><i id="itemProgress"></i></span>
     </button>
   </div>
 
@@ -92,12 +119,15 @@
             <span>Walk</span>
           </div>
           <div class="control-row"><kbd class="wide">Space</kbd><span>Jump</span></div>
+          <div class="control-row"><kbd class="wide">LMB</kbd><span>Fire &middot; <kbd>R</kbd> reload</span></div>
+          <div class="control-row"><kbd class="wide">1</kbd><span>Equip Blunderbuss</span></div>
           <div class="control-row"><kbd class="wide">Esc</kbd><span>Settings &amp; pause</span></div>
         </div>
         <div class="control-set touch-only">
           <span class="control-label">Mobile</span>
           <div class="control-row"><span class="touch-icon">◉</span><span>Left stick to walk</span></div>
           <div class="control-row"><span class="touch-icon">↟</span><span>Button to jump</span></div>
+          <div class="control-row"><span class="touch-icon">✶</span><span>Fire &amp; reload automatically</span></div>
           <div class="control-row"><span class="touch-icon">◐</span><span>Drag the view to look</span></div>
         </div>
       </div>
